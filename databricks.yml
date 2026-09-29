@@ -1,0 +1,107 @@
+# Databricks Asset Bundle: deploy the pipeline as a scheduled Job.
+#   databricks bundle validate
+#   databricks bundle deploy --target dev
+# Requires the Databricks CLI (`databricks bundle` ships with CLI >= 0.200). If you don't use bundles, ignore this
+# file and build the job by hand as described in docs/runbook.md — every notebook works standalone either way.
+
+bundle:
+  name: tanzania-telecom-customer-intelligence
+
+variables:
+  catalog:
+    description: Unity Catalog catalog to use
+    default: workspace
+  scale:
+    description: Data volume - tiny (smoke test), small (default), standard
+    default: small
+
+resources:
+  jobs:
+    tz_telecom_pipeline:
+      name: "Tanzania Telecom Customer Intelligence - full pipeline"
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: scale
+          default: ${var.scale}
+
+      # Uncomment to run daily at 02:00 Africa/Dar_es_Salaam once notebook 10 reads a real landing feed
+      # instead of simulating one (see docs/runbook.md, "Replacing the simulator with real data").
+      # schedule:
+      #   quartz_cron_expression: "0 0 2 * * ?"
+      #   timezone_id: "Africa/Dar_es_Salaam"
+      #   pause_status: PAUSED
+
+      tasks:
+        - task_key: setup_environment
+          notebook_task:
+            notebook_path: ../notebooks/01_setup_environment.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: generate_source_data
+          depends_on: [{task_key: setup_environment}]
+          notebook_task:
+            notebook_path: ../notebooks/10_generate_source_data.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: ingest_bronze
+          depends_on: [{task_key: generate_source_data}]
+          notebook_task:
+            notebook_path: ../notebooks/20_ingest_bronze.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: build_silver
+          depends_on: [{task_key: ingest_bronze}]
+          notebook_task:
+            notebook_path: ../notebooks/30_build_silver_with_dq.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: build_customer_360
+          depends_on: [{task_key: build_silver}]
+          notebook_task:
+            notebook_path: ../notebooks/40_build_customer_360.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: train_churn_model
+          depends_on: [{task_key: build_customer_360}]
+          notebook_task:
+            notebook_path: ../notebooks/50_train_churn_model.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: segment_customers
+          depends_on: [{task_key: build_customer_360}]
+          notebook_task:
+            notebook_path: ../notebooks/55_segment_customers.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: train_upsell_model
+          depends_on: [{task_key: build_customer_360}]
+          notebook_task:
+            notebook_path: ../notebooks/60_train_upsell_model.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: score_and_recommend
+          depends_on:
+            - {task_key: train_churn_model}
+            - {task_key: segment_customers}
+            - {task_key: train_upsell_model}
+          notebook_task:
+            notebook_path: ../notebooks/70_score_and_recommend.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: build_kpi_marts
+          depends_on: [{task_key: score_and_recommend}]
+          notebook_task:
+            notebook_path: ../notebooks/80_build_kpi_marts.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+        - task_key: visual_analytics
+          depends_on: [{task_key: build_kpi_marts}]
+          notebook_task:
+            notebook_path: ../notebooks/85_visual_analytics.py
+            base_parameters: {catalog: "{{job.parameters.catalog}}", scale: "{{job.parameters.scale}}"}
+
+targets:
+  dev:
+    default: true
+    mode: development

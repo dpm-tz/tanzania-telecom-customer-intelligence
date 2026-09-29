@@ -1,0 +1,19 @@
+# Local rehearsal artefacts
+/tests/__pycache__/
+/notebooks/__pycache__/
+*.pyc
+.pytest_cache/
+derby.log
+metastore_db/
+spark-warehouse/
+/tmp_*/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Never commit real credentials or exported secrets
+*.pem
+*.key
+.env
